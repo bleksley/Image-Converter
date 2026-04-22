@@ -217,8 +217,11 @@ The application will automatically open in your default browser at `http://local
    - Files exceeding this limit will be rejected with a clear error message
 2. **Select Output Format**: Choose your desired output format from the dropdown
 3. **Adjust Settings**:
-   - **Quality**: Adjust the quality slider (0-100) for lossy formats
+   - **Encoding profile**: Balanced (default), High quality, or Lossless intent
+   - **Quality**: Format-aware defaults (JPEG/JFIF 88, WebP 82, AVIF 75 in Balanced)
    - **Lossless**: Enable lossless encoding for WebP/AVIF output (checkbox)
+   - **Advanced controls**: JPEG progressive/subsampling, WebP method/alpha/exact, AVIF speed/subsampling
+   - **Metadata policy**: ICC preservation on by default; EXIF/XMP optional
    - **Advanced optimization**: Enable for PNG/JPEG to use MozJPEG/OxiPNG/OptiPNG (if available)
 4. **Convert**: Click the "Convert 📸" button
 5. **Download**: Click the download button to save your converted image
@@ -279,11 +282,38 @@ The `imgconvrtr.py` module uses Python's `ctypes` library to directly call libwe
 
 ### Conversion Flow
 
-1. **Input Processing**: Image is read and converted to RGBA format
-2. **WebP Encoding**: If output is WebP, uses libwebp API (or Pillow fallback)
-3. **WebP Decoding**: If input is WebP, uses libwebp API for decoding
-4. **Format Conversion**: Other formats use Pillow for conversion
-5. **Output**: Converted image is returned as BytesIO object
+1. **Input Processing**: Image bytes are read once and decoded
+2. **Metadata Capture**: ICC/EXIF/XMP metadata is collected for optional pass-through
+3. **WebP Decode Path**: WebP input is detected before mode conversion for reliable decode behavior
+4. **Target-Aware Conversion**: RGB/RGBA conversion is deferred until required by output format
+5. **Output**: Converted image bytes are returned and reused for preview/download
+
+### Quality Regression Harness
+
+Run objective quality/performance checks for default profiles:
+
+```bash
+python tests/quality_regression.py --profile balanced
+```
+
+This script generates synthetic fixtures and reports:
+- encode time
+- output size and ratio
+- PSNR
+- SSIM
+
+JSON output is written to `tests/quality_regression_latest.json` for easy CI baselining.
+
+For CI-style enforcement with clear failure behavior:
+
+```bash
+python tests/quality_regression.py --profile balanced --enforce-thresholds --fail-on-errors
+```
+
+Optional flags:
+- `--thresholds <path>`: use a custom JSON thresholds file
+- `--enforce-thresholds`: fail when PSNR/SSIM are below configured minimums
+- `--fail-on-errors`: fail when any conversion case errors out
 
 ## 🐛 Troubleshooting
 

@@ -388,7 +388,7 @@ def rasterize_svg(svg_data, width=None, height=None, dpi=96):
         raise RuntimeError(f"SVG rasterization failed: {e}")
 
 
-def optimize_png(png_data, tool='auto'):
+def optimize_png(png_data, tool='auto', strip_mode='safe'):
     """
     Optimize PNG using OxiPNG or OptiPNG.
     
@@ -410,12 +410,14 @@ def optimize_png(png_data, tool='auto'):
             tmp_in.write(png_data)
             tmp_in_path = tmp_in.name
         
+        strip_value = 'safe' if strip_mode not in {'none', 'safe', 'all'} else strip_mode
+
         if tool == 'oxipng':
-            subprocess.run([tool, '--opt', 'max', '--strip', 'safe', tmp_in_path],
+            subprocess.run([tool, '--opt', 'max', '--strip', strip_value, tmp_in_path],
                          check=True, capture_output=True)
         elif tool == 'optipng':
-            subprocess.run([tool, '-o7', '-strip', 'all', tmp_in_path],
-                         check=True, capture_output=True)
+            optipng_strip = 'all' if strip_value == 'all' else 'safe'
+            subprocess.run([tool, '-o7', '-strip', optipng_strip, tmp_in_path], check=True, capture_output=True)
         
         with open(tmp_in_path, 'rb') as f:
             optimized_data = f.read()
@@ -477,6 +479,56 @@ def optimize_jpeg_mozjpeg(rgb_data, width, height, quality=50):
                 except:
                     pass
         return None
+
+
+def _has_alpha_channel(img):
+    """Return True when image mode has alpha information."""
+    if img.mode in ('RGBA', 'LA'):
+        return True
+    if img.mode == 'P':
+        return 'transparency' in img.info
+    return False
+
+
+def _subsampling_to_pillow_value(subsampling):
+    """Map user-friendly subsampling string to Pillow integer value."""
+    mapping = {
+        '4:4:4': 0,
+        '4:2:2': 1,
+        '4:2:0': 2,
+    }
+    return mapping.get(subsampling, subsampling)
+
+
+def _detect_webp_signature(image_data):
+    """Detect WebP by RIFF/WebP signature without decoding."""
+    if not isinstance(image_data, (bytes, bytearray)) or len(image_data) < 12:
+        return False
+    return image_data[0:4] == b'RIFF' and image_data[8:12] == b'WEBP'
+
+
+def _build_metadata_kwargs(output_format_lower, metadata, preserve_icc=True, preserve_exif=False, preserve_xmp=False):
+    """Build format-specific metadata kwargs for Pillow save."""
+    metadata_kwargs = {}
+    if preserve_icc and metadata.get('icc_profile'):
+        metadata_kwargs['icc_profile'] = metadata['icc_profile']
+    if preserve_exif and metadata.get('exif') and output_format_lower in {'jpeg', 'jpg', 'jfif', 'webp', 'png'}:
+        metadata_kwargs['exif'] = metadata['exif']
+    if preserve_xmp and metadata.get('xmp') and output_format_lower in {'webp', 'png'}:
+        metadata_kwargs['xmp'] = metadata['xmp']
+    return metadata_kwargs
+
+
+def _save_with_fallback(img, output_img, save_kwargs):
+    """Save with graceful fallback when some Pillow options are unsupported."""
+    try:
+        img.save(output_img, **save_kwargs)
+        return
+    except TypeError:
+        fallback_kwargs = save_kwargs.copy()
+        for key in ('xmp', 'exif', 'icc_profile', 'subsampling', 'speed', 'exact', 'alpha_quality', 'method'):
+            fallback_kwargs.pop(key, None)
+        img.save(output_img, **fallback_kwargs)
 
 
 def encode_to_webp(rgba_data, width, height, quality_factor=80.0, lossless=False):
@@ -571,7 +623,18 @@ def decode_from_webp(webp_data):
     return rgba_data, width_val, height_val
 
 
-def convert_img_format(image_file, output_format, quality=80, lossless=False, optimize=False):
+def convert_img_format(
+    image_file,
+    output_format,
+    quality=82,
+    lossless=False,
+    optimize=False,
+    preserve_icc=True,
+    preserve_exif=False,
+    preserve_xmp=False,
+    advanced_options=None,
+    jpeg_background=(255, 255, 255),
+):
     """
     Convert image format with support for AVIF, WebP, SVG, and optimization.
     
@@ -641,24 +704,40 @@ def convert_img_format(image_file, output_format, quality=80, lossless=False, op
                 is_svg = True
     
     # Rasterize SVG if needed
+    input_format = None
     if is_svg:
         try:
             img = rasterize_svg(image_data)
+            input_format = 'SVG'
         except Exception as e:
             raise RuntimeError(f"SVG rasterization failed: {e}")
     else:
         # Now open with PIL using the bytes data
         try:
             img = Image.open(io.BytesIO(image_data))
+            input_format = (img.format or '').upper()
         except Exception as e:
             raise ValueError(f"Could not identify image format. The file may be corrupted or in an unsupported format: {e}")
-    
-    # Convert to RGBA for consistent handling
-    if img.mode != 'RGBA':
-        img = img.convert('RGBA')
-    
-    width, height = img.size
-    rgba_data = img.tobytes()
+
+    # Keep source metadata for optional preservation.
+    metadata = {
+        'icc_profile': img.info.get('icc_profile'),
+        'exif': img.info.get('exif'),
+        'xmp': img.info.get('xmp'),
+    }
+
+    if not input_format and _detect_webp_signature(image_data):
+        input_format = 'WEBP'
+
+    # Handle WebP input using libwebp API before any mode conversion.
+    if input_format == 'WEBP' and libwebp:
+        try:
+            decoded_rgba_data, width, height = decode_from_webp(image_data)
+            img = Image.frombytes('RGBA', (width, height), decoded_rgba_data)
+        except Exception as e:
+            print(f"libwebp decoding failed, using PIL fallback: {e}")
+
+    advanced_options = advanced_options or {}
     
     # Handle AVIF output
     if output_format_lower == 'avif':
@@ -666,10 +745,23 @@ def convert_img_format(image_file, output_format, quality=80, lossless=False, op
         try:
             # Try using pillow-avif-plugin or Pillow's built-in AVIF support
             save_kwargs = {'format': 'AVIF', 'quality': quality}
+            save_kwargs.update(
+                _build_metadata_kwargs(
+                    output_format_lower,
+                    metadata,
+                    preserve_icc=preserve_icc,
+                    preserve_exif=preserve_exif,
+                    preserve_xmp=preserve_xmp,
+                )
+            )
+            if 'avif_speed' in advanced_options:
+                save_kwargs['speed'] = int(advanced_options['avif_speed'])
+            if 'avif_subsampling' in advanced_options:
+                save_kwargs['subsampling'] = _subsampling_to_pillow_value(advanced_options['avif_subsampling'])
             if lossless:
                 save_kwargs['quality'] = 100
                 save_kwargs['lossless'] = True
-            img.save(output_img, **save_kwargs)
+            _save_with_fallback(img, output_img, save_kwargs)
             output_img.seek(0)
             return output_img
         except Exception as e:
@@ -677,8 +769,18 @@ def convert_img_format(image_file, output_format, quality=80, lossless=False, op
     
     # Handle WebP output using libwebp API
     if output_format_lower == 'webp':
-        if libwebp:
+        use_libwebp_fast_path = (
+            libwebp
+            and not preserve_icc
+            and not preserve_exif
+            and not preserve_xmp
+            and not any(k.startswith('webp_') for k in advanced_options.keys())
+        )
+        if use_libwebp_fast_path:
             try:
+                rgba_img = img.convert('RGBA')
+                width, height = rgba_img.size
+                rgba_data = rgba_img.tobytes()
                 webp_data = encode_to_webp(rgba_data, width, height, quality, lossless)
                 output_img = io.BytesIO(webp_data)
                 output_img.seek(0)
@@ -691,26 +793,27 @@ def convert_img_format(image_file, output_format, quality=80, lossless=False, op
                 output_img.seek(0)
                 return output_img
         else:
-            # Fallback to PIL if libwebp not available
+            # Use Pillow for richer control and metadata support.
             output_img = io.BytesIO()
-            img.save(output_img, format='WEBP', quality=quality, lossless=lossless)
+            save_kwargs = {'format': 'WEBP', 'quality': quality, 'lossless': lossless}
+            save_kwargs.update(
+                _build_metadata_kwargs(
+                    output_format_lower,
+                    metadata,
+                    preserve_icc=preserve_icc,
+                    preserve_exif=preserve_exif,
+                    preserve_xmp=preserve_xmp,
+                )
+            )
+            if 'webp_method' in advanced_options:
+                save_kwargs['method'] = int(advanced_options['webp_method'])
+            if 'webp_alpha_quality' in advanced_options:
+                save_kwargs['alpha_quality'] = int(advanced_options['webp_alpha_quality'])
+            if 'webp_exact' in advanced_options:
+                save_kwargs['exact'] = bool(advanced_options['webp_exact'])
+            _save_with_fallback(img, output_img, save_kwargs)
             output_img.seek(0)
             return output_img
-    
-    # Handle WebP input using libwebp API
-    elif img.format == 'WEBP' and libwebp:
-        try:
-            # Decode using libwebp (image_data is always available at this point)
-            rgba_data, width, height = decode_from_webp(image_data)
-            # Create PIL image from decoded data
-            img = Image.frombytes('RGBA', (width, height), rgba_data)
-        except Exception as e:
-            # Fallback to PIL if libwebp fails
-            print(f"libwebp decoding failed, using PIL fallback: {e}")
-            # Reopen image using the bytes we already have
-            img = Image.open(io.BytesIO(image_data))
-            if img.mode != 'RGBA':
-                img = img.convert('RGBA')
     
     # Convert to target format using PIL
     output_img = io.BytesIO()
@@ -718,15 +821,22 @@ def convert_img_format(image_file, output_format, quality=80, lossless=False, op
     # Handle format-specific options
     save_kwargs = {}
     if output_format_lower in ['jpeg', 'jpg', 'jfif']:
-        # Convert RGBA to RGB for JPEG
-        if img.mode == 'RGBA':
-            # Create white background
-            rgb_img = Image.new('RGB', img.size, (255, 255, 255))
-            rgb_img.paste(img, mask=img.split()[3])  # Use alpha channel as mask
+        # Convert to RGB for JPEG. If alpha exists, composite against configurable background color.
+        if _has_alpha_channel(img):
+            rgba_img = img.convert('RGBA')
+            rgb_img = Image.new('RGB', rgba_img.size, tuple(jpeg_background))
+            rgb_img.paste(rgba_img, mask=rgba_img.split()[3])
             img = rgb_img
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
         
         # Try MozJPEG optimization if requested and available
-        if optimize:
+        can_use_mozjpeg = not (
+            (preserve_icc and metadata.get('icc_profile'))
+            or (preserve_exif and metadata.get('exif'))
+            or (preserve_xmp and metadata.get('xmp'))
+        )
+        if optimize and can_use_mozjpeg:
             rgb_data = img.tobytes()
             optimized = optimize_jpeg_mozjpeg(rgb_data, img.size[0], img.size[1], quality)
             if optimized:
@@ -737,22 +847,48 @@ def convert_img_format(image_file, output_format, quality=80, lossless=False, op
         # Fallback to standard Pillow JPEG
         save_kwargs['quality'] = quality
         save_kwargs['format'] = 'JPEG'
-        save_kwargs['optimize'] = True  # Enable Pillow's optimize
+        save_kwargs['progressive'] = bool(advanced_options.get('jpeg_progressive', False))
+        if 'jpeg_subsampling' in advanced_options:
+            save_kwargs['subsampling'] = _subsampling_to_pillow_value(advanced_options['jpeg_subsampling'])
+        if optimize:
+            save_kwargs['optimize'] = True
+        save_kwargs.update(
+            _build_metadata_kwargs(
+                output_format_lower,
+                metadata,
+                preserve_icc=preserve_icc,
+                preserve_exif=preserve_exif,
+                preserve_xmp=preserve_xmp,
+            )
+        )
     elif output_format_lower == 'png':
         save_kwargs['format'] = 'PNG'
-        save_kwargs['optimize'] = True  # Enable Pillow's optimize
+        if optimize:
+            save_kwargs['optimize'] = True
+        save_kwargs.update(
+            _build_metadata_kwargs(
+                output_format_lower,
+                metadata,
+                preserve_icc=preserve_icc,
+                preserve_exif=preserve_exif,
+                preserve_xmp=preserve_xmp,
+            )
+        )
     elif output_format_lower == 'bmp':
-        if img.mode == 'RGBA':
+        if _has_alpha_channel(img):
+            img = img.convert('RGB')
+        elif img.mode not in ('RGB', 'L'):
             img = img.convert('RGB')
         save_kwargs['format'] = 'BMP'
     
-    img.save(output_img, **save_kwargs)
+    _save_with_fallback(img, output_img, save_kwargs)
     output_img.seek(0)
     
     # Apply PNG optimization tools if requested
     if output_format_lower == 'png' and optimize:
         png_data = output_img.getvalue()
-        optimized_data = optimize_png(png_data)
+        png_strip_mode = advanced_options.get('png_strip_metadata', 'safe')
+        optimized_data = optimize_png(png_data, strip_mode=png_strip_mode)
         output_img = io.BytesIO(optimized_data)
         output_img.seek(0)
     

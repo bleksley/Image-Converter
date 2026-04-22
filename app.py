@@ -1,3 +1,4 @@
+import io
 import streamlit as st
 import time
 from PIL import Image
@@ -120,6 +121,10 @@ if uploaded_file is not None:
             f"Please upload a smaller file."
         )
         st.stop()
+    # Read source bytes once for preview, conversion, and statistics.
+    original_bytes = uploaded_file.getvalue()
+    original_size = len(original_bytes) if original_bytes else 0
+
     # Display the uploaded image
     # Handle SVG separately since it's a vector format
     file_extension = uploaded_file.name.lower().split('.')[-1] if uploaded_file.name else ''
@@ -132,8 +137,7 @@ if uploaded_file is not None:
         # For SVG, we'll rasterize it for display
         from imgconvrtr import rasterize_svg
         try:
-            svg_data = uploaded_file.read()
-            uploaded_file.seek(0)  # Reset for conversion
+            svg_data = original_bytes
             img = rasterize_svg(svg_data)
             original_img_for_comparison = img  # Store for comparison
             st.image(img, caption="Uploaded SVG Image (rasterized for preview)", width="stretch")
@@ -156,34 +160,165 @@ if uploaded_file is not None:
         ["AVIF", "WebP", "PNG", "JPEG", "JFIF", "BMP"]
     )
     
+    profile_presets = {
+        "Balanced": {
+            "quality": {"jpeg": 88, "jfif": 88, "webp": 82, "avif": 75},
+            "jpeg_progressive": True,
+            "jpeg_subsampling": "4:2:0",
+            "webp_method": 4,
+            "webp_alpha_quality": 90,
+            "webp_exact": False,
+            "avif_speed": 6,
+            "avif_subsampling": "4:2:0",
+            "lossless_webp": False,
+            "lossless_avif": False,
+        },
+        "High quality": {
+            "quality": {"jpeg": 92, "jfif": 92, "webp": 90, "avif": 80},
+            "jpeg_progressive": True,
+            "jpeg_subsampling": "4:4:4",
+            "webp_method": 6,
+            "webp_alpha_quality": 100,
+            "webp_exact": True,
+            "avif_speed": 4,
+            "avif_subsampling": "4:4:4",
+            "lossless_webp": False,
+            "lossless_avif": False,
+        },
+        "Lossless intent": {
+            "quality": {"jpeg": 90, "jfif": 90, "webp": 100, "avif": 100},
+            "jpeg_progressive": True,
+            "jpeg_subsampling": "4:4:4",
+            "webp_method": 6,
+            "webp_alpha_quality": 100,
+            "webp_exact": True,
+            "avif_speed": 4,
+            "avif_subsampling": "4:4:4",
+            "lossless_webp": True,
+            "lossless_avif": True,
+        },
+    }
+
+    st.markdown("### Encoding profile")
+    profile_name = st.selectbox("Choose launch profile", ["Balanced", "High quality", "Lossless intent"], index=0)
+    selected_profile = profile_presets[profile_name]
+    format_key = output_format.lower()
+    default_quality = selected_profile["quality"].get(format_key, 88)
+
     # Quality, lossless, and optimization options
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
+        quality_help = "Higher values mean better quality but larger file size."
+        if format_key == "png":
+            quality_help = "PNG is lossless; quality has no visual effect and is kept for consistency."
+        elif format_key == "bmp":
+            quality_help = "BMP does not use quality settings."
         quality = st.slider(
             "Quality (for lossy formats)", 
             min_value=0, 
             max_value=100, 
-            value=50,
-            help="Higher values mean better quality but larger file size"
+            value=default_quality,
+            help=quality_help,
+            disabled=format_key in ["png", "bmp"]
         )
     
     with col2:
         lossless = False
-        if output_format.lower() in ["webp", "avif"]:
+        if format_key in ["webp", "avif"]:
+            default_lossless = selected_profile["lossless_webp"] if format_key == "webp" else selected_profile["lossless_avif"]
             lossless = st.checkbox(
                 "Lossless encoding", 
-                value=False,
+                value=default_lossless,
                 help=f"Lossless {output_format} encoding (no quality loss, larger file size)"
             )
     
     with col3:
         optimize = False
-        if output_format.lower() in ["png", "jpeg", "jpg", "jfif"]:
+        if format_key in ["png", "jpeg", "jpg", "jfif"]:
             optimize = st.checkbox(
                 "Advanced optimization",
                 value=False,
                 help="Use MozJPEG for JPEG or OxiPNG/OptiPNG for PNG (if available)"
+            )
+
+    with st.expander("Advanced quality and metadata controls"):
+        st.markdown("**Metadata policy**")
+        preserve_icc = st.checkbox(
+            "Preserve ICC color profile",
+            value=True,
+            help="Recommended to avoid color shifts on wide-gamut images.",
+        )
+        preserve_exif = st.checkbox("Preserve EXIF metadata", value=False)
+        preserve_xmp = st.checkbox("Preserve XMP metadata", value=False)
+
+        advanced_options = {}
+        jpeg_background = (255, 255, 255)
+
+        if format_key in ["jpeg", "jpg", "jfif"]:
+            st.markdown("**JPEG controls**")
+            jpeg_progressive = st.checkbox(
+                "Progressive JPEG",
+                value=selected_profile["jpeg_progressive"],
+            )
+            jpeg_subsampling = st.selectbox(
+                "JPEG subsampling",
+                ["4:4:4", "4:2:2", "4:2:0"],
+                index=["4:4:4", "4:2:2", "4:2:0"].index(selected_profile["jpeg_subsampling"]),
+            )
+            matte_hex = st.color_picker(
+                "Transparency background color (used when input has alpha)",
+                value="#FFFFFF",
+            )
+            matte_hex = matte_hex.lstrip("#")
+            jpeg_background = tuple(int(matte_hex[i:i+2], 16) for i in (0, 2, 4))
+            advanced_options.update(
+                {
+                    "jpeg_progressive": jpeg_progressive,
+                    "jpeg_subsampling": jpeg_subsampling,
+                }
+            )
+
+        if format_key == "webp":
+            st.markdown("**WebP controls**")
+            advanced_options["webp_method"] = st.slider(
+                "WebP method (speed vs compression)",
+                min_value=0,
+                max_value=6,
+                value=selected_profile["webp_method"],
+            )
+            advanced_options["webp_alpha_quality"] = st.slider(
+                "WebP alpha quality",
+                min_value=0,
+                max_value=100,
+                value=selected_profile["webp_alpha_quality"],
+            )
+            advanced_options["webp_exact"] = st.checkbox(
+                "WebP exact (preserve RGB values under transparency)",
+                value=selected_profile["webp_exact"],
+            )
+
+        if format_key == "avif":
+            st.markdown("**AVIF controls**")
+            advanced_options["avif_speed"] = st.slider(
+                "AVIF speed (lower is slower but higher quality)",
+                min_value=0,
+                max_value=10,
+                value=selected_profile["avif_speed"],
+            )
+            advanced_options["avif_subsampling"] = st.selectbox(
+                "AVIF subsampling",
+                ["4:4:4", "4:2:2", "4:2:0"],
+                index=["4:4:4", "4:2:2", "4:2:0"].index(selected_profile["avif_subsampling"]),
+            )
+
+        if format_key == "png":
+            st.markdown("**PNG controls**")
+            advanced_options["png_strip_metadata"] = st.selectbox(
+                "PNG optimizer metadata stripping",
+                ["none", "safe", "all"],
+                index=1,
+                help="Used only when Advanced optimization is enabled.",
             )
     
     # Convert and download the image
@@ -196,8 +331,6 @@ if uploaded_file is not None:
             # Step 1: Reading and validating file
             status_text.text("📖 Reading image file...")
             progress_bar.progress(10)
-            original_bytes = uploaded_file.getvalue()
-            original_size = len(original_bytes) if original_bytes else 0
             
             # Step 2: Starting conversion
             if optimize:
@@ -208,11 +341,16 @@ if uploaded_file is not None:
                 progress_bar.progress(30)
             
             converted_img = convert_img_format(
-                uploaded_file,
+                original_bytes,
                 output_format.lower(),
                 quality=quality,
                 lossless=lossless,
                 optimize=optimize,
+                preserve_icc=preserve_icc,
+                preserve_exif=preserve_exif,
+                preserve_xmp=preserve_xmp,
+                advanced_options=advanced_options,
+                jpeg_background=jpeg_background,
             )
             
             # Step 3: Processing converted image
@@ -280,19 +418,14 @@ if uploaded_file is not None:
                 original_img = original_img_for_comparison
             else:
                 # Fallback: load it fresh if somehow not stored
-                uploaded_file.seek(0)  # Reset file pointer
                 if is_svg:
                     from imgconvrtr import rasterize_svg
-                    svg_data = uploaded_file.read()
-                    uploaded_file.seek(0)  # Reset for download
-                    original_img = rasterize_svg(svg_data)
+                    original_img = rasterize_svg(original_bytes)
                 else:
-                    original_img = Image.open(uploaded_file)
+                    original_img = Image.open(io.BytesIO(original_bytes))
             
             # Load converted image for display
-            converted_img.seek(0)  # Reset BytesIO pointer
-            converted_img_display = Image.open(converted_img)
-            converted_img.seek(0)  # Reset again for download button
+            converted_img_display = Image.open(io.BytesIO(converted_bytes))
             
             with col_before:
                 st.markdown("**📷 Original Image**")
@@ -343,7 +476,7 @@ if uploaded_file is not None:
             
             st.download_button(
                 label=f"📥 Download as {output_format}",
-                data=converted_img,
+                data=converted_bytes,
                 file_name=f"image.{output_format.lower()}",
                 mime=mime_type,
                 use_container_width=True
