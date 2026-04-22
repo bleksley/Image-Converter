@@ -1,4 +1,4 @@
-# 🖼️ Image Converter with libwebp API Integration
+# Codec & Dagger
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)](https://streamlit.io/)
@@ -8,13 +8,15 @@ A modern, web-based image converter built with Streamlit that uses the **libwebp
 
 ## ✨ Features
 
-- 🔌 **Direct libwebp API Integration**: Uses Python's `ctypes` to call libwebp C functions directly
-- 🎨 **WebP Support**: Full support for WebP encoding (lossy and lossless) and decoding
-- 🧪 **AVIF Support**: Advanced, high-efficiency AVIF image encoding via Pillow/`pillow-avif-plugin`
-- 🎭 **SVG Support**: Vector SVG files can be rasterized and converted to raster formats
-- 📸 **Multiple Formats**: Supports PNG, JPEG, JFIF, BMP, WebP, AVIF, and SVG
-- ⚙️ **Quality Control**: Adjustable quality settings (0-100) for lossy formats
-- 🎯 **Lossless Option**: Option for lossless WebP and AVIF encoding
+- 🖼️ **Image + Video Workflows**: Dedicated tabs for image conversion and video-to-WebM conversion
+- 🔌 **Direct libwebp API Integration**: Uses Python's `ctypes` to call libwebp C functions directly for image WebP workflows
+- 🎨 **WebP Image Support**: Full support for WebP image encoding (lossy/lossless) and decoding
+- 🧪 **AVIF Support**: High-efficiency AVIF image encoding via Pillow/`pillow-avif-plugin`
+- 🎭 **SVG Support**: Vector SVG files can be rasterized and converted to raster image formats
+- 🎬 **WebM Video Support**: Converts MP4/MOV/MKV/AVI/WEBM/M4V to WebM (VP9 + Opus) via managed ffmpeg
+- 🔁 **Reverse Video Option**: Optional reverse conversion using ffmpeg `reverse` and `areverse`
+- ⚙️ **Quality Controls**: Adjustable image quality and advanced video controls (CRF, speed, audio bitrate, fps, resize)
+- 🎯 **Lossless Image Option**: Optional lossless WebP and AVIF image encoding
 - 🛠️ **Advanced Compression Tools**:
   - **MozJPEG**: For optimizing JPEG files when `cjpeg`/MozJPEG is available
   - **OxiPNG/OptiPNG**: For lossless PNG optimization when installed
@@ -212,11 +214,11 @@ The application will automatically open in your default browser at `http://local
 
 ### Using the Image Converter
 
-1. **Upload an Image**: Click "Upload an Image" and select a file (PNG, JPEG, JFIF, BMP, WebP, AVIF, or SVG)
+1. **Image tab**: Upload an image (PNG, JPEG, JFIF, BMP, WebP, AVIF, or SVG)
    - **File Size Limit**: Maximum file size is **200MB** per file
    - Files exceeding this limit will be rejected with a clear error message
-2. **Select Output Format**: Choose your desired output format from the dropdown
-3. **Adjust Settings**:
+2. **Select Output Format**: Choose the desired image output format from the dropdown
+3. **Adjust Image Settings**:
    - **Encoding profile**: Balanced (default), High quality, or Lossless intent
    - **Quality**: Format-aware defaults (JPEG/JFIF 88, WebP 82, AVIF 75 in Balanced)
    - **Lossless**: Enable lossless encoding for WebP/AVIF output (checkbox)
@@ -225,6 +227,21 @@ The application will automatically open in your default browser at `http://local
    - **Advanced optimization**: Enable for PNG/JPEG to use MozJPEG/OxiPNG/OptiPNG (if available)
 4. **Convert**: Click the "Convert 📸" button
 5. **Download**: Click the download button to save your converted image
+
+### Using the Video Converter (WebM)
+
+1. Open the **Video Converter** tab
+2. Upload a video file (`mp4`, `mov`, `mkv`, `avi`, `webm`, `m4v`)
+3. Adjust WebM settings:
+   - **CRF** (quality/size tradeoff, lower = better quality)
+   - **Speed** (`0` best quality to `6` fastest encode)
+   - **Audio bitrate**
+   - Optional **FPS cap**
+   - Optional **Resize** dimensions
+4. Click **Convert Video to WebM 🎬**
+5. Preview the converted video and download the `.webm` output
+
+The video path uses `imageio-ffmpeg` to provide a managed ffmpeg binary.
 
 **Note**: SVG files are automatically rasterized before conversion to the selected format.
 
@@ -274,11 +291,19 @@ The `imgconvrtr.py` module uses Python's `ctypes` library to directly call libwe
 |--------|-------|--------|--------|
 | AVIF   | ✅    | ✅     | Pillow + `pillow-avif-plugin` |
 | WebP   | ✅    | ✅     | libwebp API (with Pillow fallback) |
+| Video (MP4/MOV/MKV/AVI/WEBM/M4V) | ✅ | ✅ (WebM) | FFmpeg via `imageio-ffmpeg` |
 | SVG    | ✅    | ❌     | svglib + reportlab (rasterized to other formats) |
 | PNG    | ✅    | ✅     | Pillow (+ OxiPNG/OptiPNG when available) |
 | JPEG   | ✅    | ✅     | Pillow (+ MozJPEG when available) |
 | JFIF   | ✅    | ✅     | Pillow |
 | BMP    | ✅    | ✅     | Pillow |
+
+### Supported Formats
+
+- **Image Input:** PNG, JPEG, JFIF, BMP, WebP, AVIF, SVG
+- **Image Output:** AVIF, WebP, PNG, JPEG, JFIF, BMP
+- **Video Input:** MP4, MOV, MKV, AVI, WEBM, M4V
+- **Video Output:** WEBM (VP9 video + Opus audio)
 
 ### Conversion Flow
 
@@ -287,6 +312,14 @@ The `imgconvrtr.py` module uses Python's `ctypes` library to directly call libwe
 3. **WebP Decode Path**: WebP input is detected before mode conversion for reliable decode behavior
 4. **Target-Aware Conversion**: RGB/RGBA conversion is deferred until required by output format
 5. **Output**: Converted image bytes are returned and reused for preview/download
+
+### Video Conversion Flow
+
+1. **Input Validation**: Video bytes are validated and size-limited
+2. **FFmpeg Preflight**: Managed ffmpeg binary and VP9/Opus support are verified
+3. **Transcode**: ffmpeg converts source video to WebM (VP9 + Opus)
+4. **Output Validation**: Output file existence/non-empty checks are enforced
+5. **Preview + Download**: Output bytes are previewed and offered for download
 
 ### Quality Regression Harness
 
@@ -353,6 +386,22 @@ Optional flags:
   - Split large images into smaller files
   - Use image editing software to reduce file size
   - The 200MB limit helps prevent resource exhaustion and ensures smooth operation
+
+### Video Conversion Errors
+
+**Managed ffmpeg unavailable**:
+- Ensure `imageio-ffmpeg` is installed in the same Python environment
+- Restart Streamlit after dependency install
+- Review ffmpeg diagnostics shown in the app status section
+
+**Codec support error (VP9/Opus)**:
+- Your ffmpeg build may not include `libvpx-vp9` or `libopus`
+- Reinstall/refresh the managed ffmpeg dependency
+
+**Timeout errors**:
+- Reduce resolution or FPS
+- Increase speed setting (faster encoding)
+- Increase timeout for large or high-complexity inputs
 
 ### Platform-Specific Issues
 

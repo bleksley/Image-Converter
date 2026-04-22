@@ -10,3 +10,6 @@ svglib>=1.5.1
 reportlab>=4.0.0
 pdf2image>=1.16.0
 
+# Video/WebM support (managed ffmpeg binary helper)
+imageio-ffmpeg>=0.6.0
+

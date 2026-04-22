@@ -14,3 +14,6 @@ pillow-avif-plugin==1.5.5
 svglib==1.6.0
 reportlab==4.4.9
 pdf2image==1.17.0
+
+# Video/WebM support (managed ffmpeg binary helper)
+imageio-ffmpeg==0.6.0
