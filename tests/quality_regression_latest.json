@@ -1,0 +1,83 @@
+{
+  "profile": "balanced",
+  "fixtures": {
+    "natural_gradient": {
+      "jpeg": {
+        "source_size_bytes": 24289,
+        "output_size_bytes": 10875,
+        "size_ratio": 0.44773354193256204,
+        "encode_time_ms": 72.52490002429113,
+        "psnr_db": 39.25773239135742,
+        "ssim": 0.999119222164154
+      },
+      "webp": {
+        "source_size_bytes": 24289,
+        "output_size_bytes": 2634,
+        "size_ratio": 0.1084441516735971,
+        "encode_time_ms": 2279.7170000267215,
+        "psnr_db": 38.84637451171875,
+        "ssim": 0.9990313649177551
+      },
+      "avif": {
+        "source_size_bytes": 24289,
+        "output_size_bytes": 1451,
+        "size_ratio": 0.059738976491415866,
+        "encode_time_ms": 232.9708999604918,
+        "psnr_db": 38.97358322143555,
+        "ssim": 0.9990641474723816
+      }
+    },
+    "graphics_text": {
+      "jpeg": {
+        "source_size_bytes": 15048,
+        "output_size_bytes": 9084,
+        "size_ratio": 0.6036682615629984,
+        "encode_time_ms": 27.42149995174259,
+        "psnr_db": 35.459678649902344,
+        "ssim": 0.9984848499298096
+      },
+      "webp": {
+        "source_size_bytes": 15048,
+        "output_size_bytes": 2870,
+        "size_ratio": 0.1907230196703881,
+        "encode_time_ms": 528.9535999763757,
+        "psnr_db": 35.239036560058594,
+        "ssim": 0.9984230995178223
+      },
+      "avif": {
+        "source_size_bytes": 15048,
+        "output_size_bytes": 2548,
+        "size_ratio": 0.16932482721956407,
+        "encode_time_ms": 322.9455999680795,
+        "psnr_db": 35.49784469604492,
+        "ssim": 0.9985045790672302
+      }
+    },
+    "alpha_overlay": {
+      "jpeg": {
+        "source_size_bytes": 2985,
+        "output_size_bytes": 8734,
+        "size_ratio": 2.925963149078727,
+        "encode_time_ms": 25.208999984897673,
+        "psnr_db": 3.067197799682617,
+        "ssim": 0.09026426076889038
+      },
+      "webp": {
+        "source_size_bytes": 2985,
+        "output_size_bytes": 3542,
+        "size_ratio": 1.1865996649916248,
+        "encode_time_ms": 493.78290004096925,
+        "psnr_db": 22.401819229125977,
+        "ssim": 0.9797508716583252
+      },
+      "avif": {
+        "source_size_bytes": 2985,
+        "output_size_bytes": 2268,
+        "size_ratio": 0.7597989949748744,
+        "encode_time_ms": 648.3905999921262,
+        "psnr_db": 29.77978515625,
+        "ssim": 0.9963695406913757
+      }
+    }
+  }
+}
